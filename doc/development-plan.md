@@ -17,7 +17,8 @@
 | XML 解析 | `fast-xml-parser`（**唯一运行时依赖**） | PRD 5.8.3 |
 | 单元测试 | Vitest（协议层为纯 Node 模块，无需 Electron） | NFR-4.1、NFR-4.2 |
 | 集成测试 | `@vscode/test-cli` + `@vscode/test-electron` | 覆盖 FSP 与 UI 层 |
-| 测试服务端 | Docker Compose：Nextcloud、Apache `mod_dav`、Nginx + `dav-ext` | PRD 5.6 兼容性矩阵 |
+| CI 服务端 | GitHub Actions `services:` 一次性 Nextcloud 容器 | 公网 runner 够不到内网，见 §2.1 |
+| 测试服务端 | Docker Compose，部署于内网服务器 `home-debian`（Debian 13 / Docker 26.1.5 / 4C7.8G） | PRD 5.6 兼容性矩阵，见 §2.1 |
 | 代码规范 | ESLint + Prettier | — |
 | CI | GitHub Actions（lint / unit / integration / package） | — |
 | 发布 | `@vscode/vsce` | — |
@@ -26,7 +27,43 @@
 
 ---
 
-## 2. 代码结构
+## 2. 测试环境拓扑
+
+本扩展是 WebDAV **客户端**，其协议行为无法脱离真实服务端验证：`PROPFIND` 的 XML 结构、`href` 是绝对 URL 还是相对路径、`MOVE` 的 `Destination` 头能否被接受，都只能对着实现跑出来。单元测试的桩数据本身即来自真实响应采样（T-0.3 产出）。
+
+### 2.1 部署位置
+
+`docker/compose.yml` 是**唯一事实来源**，部署到内网服务器 `home-debian`（实际主机名 `nas-debian`）。禁止在服务器上手工配置服务——否则环境会静默漂移，且无人可复现。
+
+| 用途 | 位置 | 说明 |
+| :--- | :--- | :--- |
+| 日常开发、兼容性矩阵、性能基准 | `home-debian` 常驻 | 走真实局域网，与 NFR-1.4 定义的基准环境一致 |
+| CI 每次 PR 的集成测试门禁 | GitHub Actions 一次性容器 | 公网 runner 无法访问内网；仅起 Nextcloud 单点 |
+| 离线 / 外网办公 | 本机 `docker compose up` | 同一份 compose 文件，无需另行维护 |
+
+**选择内网常驻而非 localhost 的实质理由**：NFR-1.4 的性能指标定义在「100Mbps 局域网」环境下。跑 localhost 会得到失真的乐观数字，使 P95 门槛形同虚设；自签名证书（NFR-2.3）与代理（FR-1.6）同样只有经过真实网络才走得到关键分支。
+
+### 2.2 服务清单与测试职责
+
+| 服务 | 承担的验证职责 | 容器化 |
+| :--- | :--- | :--- |
+| Nextcloud | 最主流目标；验证 `/remote.php/dav/files/<user>/` 这类 base path 前缀拼接 | ✅ |
+| ownCloud | 与 Nextcloud 同源但版本行为有差异 | ✅ |
+| AList | 对象存储后端，`MOVE` / `COPY` 可能不支持，验证能力探测与回退 | ✅ |
+| Apache `mod_dav` | **唯一可获得 Digest 认证的环境**；无此项则 FR-1.5 P1 与 T-3.4 无法开发 | ✅ |
+| Nginx + `dav-ext` | 能力残缺场景：原生模块不支持 `PROPFIND`，验证降级路径与错误可读性 | ✅ |
+| 群晖 DSM | — | ❌ **无容器化途径**（整套 NAS 操作系统） |
+
+**群晖处理方式**：需真机手工验证，或在 PRD 5.6 矩阵中降级为「社区反馈驱动」。此前 T-0.2 只搭 3 个服务端而 T-2.10 要求 6 个，缺口在此闭合。
+
+### 2.3 共享常驻带来的两项约束
+
+- **沙盒隔离**：每次测试运行使用独立的沙盒目录（如 `/dav-sandbox/<run-id>/`）。`delete` 递归删除、`rename` 覆盖等破坏性用例绝不允许作用于共享数据。
+- **可复位**：提供 `docker/reset.sh`，一条命令将测试数据集恢复到已知状态。常驻服务的数据必然随测试累积漂移，无复位手段则结果不可信。
+
+---
+
+## 3. 代码结构
 
 分层严格遵循 NFR-4.1：`src/webdav/**` 与 `src/connection/store.ts` 之外的协议逻辑**不得 `import 'vscode'`**，由 ESLint 规则强制。
 
@@ -61,21 +98,22 @@ test/
   integration/              @vscode/test-cli：FSP 端到端
   compat/                   兼容性冒烟用例集（PRD 5.6）
 docker/
-  compose.yml               本地/CI 测试服务端
+  compose.yml               5 个测试服务端（部署至 home-debian，见 §2.1）
+  seed.sh  reset.sh         测试数据集播种与复位
 ```
 
 ---
 
-## 3. 阶段任务拆解
+## 4. 阶段任务拆解
 
-### Phase 0：工程基建与技术验证（约 4 人天）
+### Phase 0：工程基建与技术验证（约 4.5 人天）
 
 > **本阶段是决策门，未通过不得进入 Phase 1。**
 
 | ID | 任务 | 对应需求 | 估时 | 交付物 / 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
 | T-0.1 | 仓库脚手架：TS + esbuild + ESLint（含"协议层禁止 import vscode"规则）+ Vitest + GitHub Actions | — | 1.0 | `npm run build` 产出可加载的 CJS bundle；CI 全绿 |
-| T-0.2 | Docker Compose 测试环境：Nextcloud、Apache `mod_dav`（开 Digest）、Nginx + `dav-ext` | NFR-3.1 | 1.0 | `docker compose up` 后三个服务端均可用 curl 完成 PROPFIND |
+| T-0.2 | 编写 `docker/compose.yml`（5 个服务端，见 §2.2）并部署至 `home-debian`；配套数据集播种与 `reset.sh`；CI 一次性 Nextcloud service container | NFR-3.1 | 1.5 | 5 个服务端均可用 curl 完成 PROPFIND；`reset.sh` 可复位；CI 门禁跑通 |
 | T-0.3 | **协议层 spike**：`PROPFIND Depth:1`（含中文/空格/`#` 文件名）→ `GET` → `PUT`，对 Nextcloud 与 `mod_dav` 各跑通 | PRD 5.8.4 | 2.0 | 两个服务端全部通过；产出 href 格式差异记录 |
 
 **Phase 0 决策门**：T-0.3 通过 → 维持自研方案；未通过 → 启动 PRD 8.3 退出条件（改用 `webdav@5` + esbuild），并回写 PRD 5.8。
@@ -161,16 +199,16 @@ graph LR
 
 ---
 
-## 4. 排期汇总
+## 5. 排期汇总
 
 | 阶段 | 工作量 | 单人周期 | 产出 |
 | :--- | :--- | :--- | :--- |
-| Phase 0 | 4.0 人天 | 第 1 周 | 技术方案确认 |
+| Phase 0 | 4.5 人天 | 第 1 周 | 技术方案确认 |
 | Phase 1 | 12.5 人天 | 第 2–4 周 | v0.1.0（内部可用） |
 | Phase 2 | 14.0 人天 | 第 5–7 周 | v0.2.0（Marketplace 首发） |
 | Phase 3 | 13.5 人天 | 第 8–10 周 | v0.3.0（生产可用） |
 | Phase 4 | 3.5 人天 | 第 11 周 | v0.4.0 |
-| **合计** | **47.5 人天** | **约 11 周** | — |
+| **合计** | **48.0 人天** | **约 11 周** | — |
 
 **关键路径**：`T-0.3 spike → T-1.1 路径编码 → T-1.3 PROPFIND 解析 → T-1.8 FSP → T-2.1 缓存 → T-2.10 兼容性实测`。
 
@@ -180,21 +218,22 @@ graph LR
 
 ---
 
-## 5. 测试策略
+## 6. 测试策略
 
 | 层次 | 范围 | 工具 | 门槛 |
 | :--- | :--- | :--- | :--- |
 | 单元测试 | `src/webdav/**`、`fs/cache.ts`、`fs/errorMap.ts` | Vitest（注入 `http.request` 打桩） | 覆盖率 ≥ 70%（NFR-4.2），`path.ts` ≥ 90% |
-| 集成测试 | FSP 全部方法对真实服务端 | `@vscode/test-cli` + Docker 服务端 | 每次 PR 运行（Nextcloud 单点） |
-| 兼容性冒烟 | 6 个服务端 × 7 步用例 | `test/compat/` 脚本 | 每次发版前全量运行，结果回写 PRD 5.6 |
-| 性能基准 | NFR-1.4 五项指标 | 独立基准脚本 | Phase 3 起每次发版运行 |
+| 集成测试（CI 门禁） | FSP 全部方法 | `@vscode/test-cli` + Actions 一次性 Nextcloud 容器 | 每次 PR 运行 |
+| 集成测试（本地） | FSP 全部方法对 5 个服务端 | `@vscode/test-cli` + `home-debian` | 合并前手动运行 |
+| 兼容性冒烟 | 5 个容器化服务端 + 群晖真机 × 7 步用例 | `test/compat/` 脚本对 `home-debian` | 每次发版前全量运行，结果回写 PRD 5.6 |
+| 性能基准 | NFR-1.4 五项指标 | 基准脚本对 `home-debian`（真实局域网） | Phase 3 起每次发版运行 |
 | 安全检查 | 日志脱敏、URI 无凭据、路径穿越 | 单测断言 + 人工 checklist | 每次发版 |
 
-**必备测试数据集**：目录内应包含 `中文文件名.md`、`with space.txt`、`hash#name.txt`、`plus+name.txt`、`percent%25.txt`、深层嵌套目录、空目录、1KB/1MB/60MB 文件各一。该数据集由 T-0.2 的 Compose 环境初始化时自动生成。
+**必备测试数据集**：目录内应包含 `中文文件名.md`、`with space.txt`、`hash#name.txt`、`plus+name.txt`、`percent%25.txt`、深层嵌套目录、空目录、1KB/1MB/60MB 文件各一。该数据集由 T-0.2 的播种脚本在 `home-debian` 上初始化，并可由 `reset.sh` 随时复位。
 
 ---
 
-## 6. 发布流程
+## 7. 发布流程
 
 1. 版本号遵循 SemVer；`0.x` 阶段次版本号可含破坏性变更。
 2. 发版前置检查：单测通过 → 集成测试通过 → 兼容性冒烟全量通过并回写 PRD 5.6 → 安全 checklist → CHANGELOG 更新。
@@ -203,7 +242,7 @@ graph LR
 
 ---
 
-## 7. 风险与应对（承接 PRD 第 7 节）
+## 8. 风险与应对（承接 PRD 第 7 节）
 
 | 风险 | 对开发计划的影响 | 应对 |
 | :--- | :--- | :--- |
@@ -211,7 +250,8 @@ graph LR
 | R2 服务端差异在 T-2.10 集中暴露 | 可能返工 T-1.1 / T-1.3 | 在 T-0.3 阶段即采集三个服务端的真实响应样本作为单测夹具，提前暴露差异 |
 | 8.1.1 大小写决策拖延 | `registerFileSystemProvider` 参数返工 | 设为 Phase 2 开工的硬前置 |
 | R1 用户预期错位 | 非开发风险，但影响评分 | T-1.11 能力声明 + T-2.9 首次提示 + 发布流程第 4 条 |
-| R4 高延迟下卡顿 | 若 Phase 2 才发现，缓存设计可能不足 | T-0.2 环境中加入网络延迟注入，Phase 1 即可感知 |
+| R4 高延迟下卡顿 | 若 Phase 2 才发现，缓存设计可能不足 | `home-debian` 本身即真实局域网延迟；必要时注入额外延迟，Phase 1 即可感知 |
+| `home-debian` 不可达（离线 / 外网办公） | 开发与测试中断 | 同一份 `compose.yml` 可在本机 `up`，无需另行维护环境 |
 
 ---
 
