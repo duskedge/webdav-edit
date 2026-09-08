@@ -106,15 +106,27 @@ docker/
 
 ## 4. 阶段任务拆解
 
+> **实现进度（2026-09-08，Phase 1–4）**：✅ = 已实现且通过门禁；◐ = 部分实现；⚠ = 产物就绪但需真机验证。
+> 门禁现状：`npm run check` 通过（tsc + 激活时序守卫 + 清单一致性守卫 + eslint）；
+> `npm test` 110 passed；协议层覆盖率 语句 86.9% / 分支 75.1%，`path.ts` 100%。
+> **未完成**：T-0.2 与 T-2.10 依赖 `home-debian` 上的 5 个测试服务端，本机无 Docker，
+> `docker/` 与 `test/compat/` 均已就绪但**从未真机执行**，PRD 5.6 矩阵仍全为「待验证」。
+> **Phase 1–4 的全部编码任务已完成**，唯二例外：
+> - **T-4.4（全文搜索接入）**：`TextSearchProvider` 至今仍是 proposed API，
+>   使用后无法发布到 Marketplace，按计划「可能不启动」暂缓（⏸）。
+> - **T-0.2 / T-2.10** 需真机环境，见下。
+> T-3.7 基准脚本已就绪（`npm run bench`），但**正式达标数字须在 100Mbps 局域网实测**——
+> 本地内存服务端的数字偏乐观，仅用于回归比较。
+
 ### Phase 0：工程基建与技术验证（约 4.5 人天）
 
 > **本阶段是决策门，未通过不得进入 Phase 1。**
 
 | ID | 任务 | 对应需求 | 估时 | 交付物 / 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
-| T-0.1 | 仓库脚手架：TS + esbuild + ESLint（含"协议层禁止 import vscode"规则）+ Vitest + GitHub Actions | — | 1.0 | `npm run build` 产出可加载的 CJS bundle；CI 全绿 |
-| T-0.2 | 编写 `docker/compose.yml`（5 个服务端，见 §2.2）并部署至 `home-debian`；配套数据集播种与 `reset.sh`；CI 一次性 Nextcloud service container | NFR-3.1 | 1.5 | 5 个服务端均可用 curl 完成 PROPFIND；`reset.sh` 可复位；CI 门禁跑通 |
-| T-0.3 | **协议层 spike**：`PROPFIND Depth:1`（含中文/空格/`#` 文件名）→ `GET` → `PUT`，对 Nextcloud 与 `mod_dav` 各跑通 | PRD 5.8.4 | 2.0 | 两个服务端全部通过；产出 href 格式差异记录 |
+| ✅ T-0.1 | 仓库脚手架：TS + esbuild + ESLint（含"协议层禁止 import vscode"规则）+ Vitest + GitHub Actions | — | 1.0 | `npm run build` 产出可加载的 CJS bundle；CI 全绿 |
+| ⚠ T-0.2 | 编写 `docker/compose.yml`（5 个服务端，见 §2.2）并部署至 `home-debian`；配套数据集播种与 `reset.sh`；CI 一次性 Nextcloud service container | NFR-3.1 | 1.5 | 5 个服务端均可用 curl 完成 PROPFIND；`reset.sh` 可复位；CI 门禁跑通 |
+| ✅ T-0.3 | **协议层 spike**：`PROPFIND Depth:1`（含中文/空格/`#` 文件名）→ `GET` → `PUT`，对 Nextcloud 与 `mod_dav` 各跑通 | PRD 5.8.4 | 2.0 | 两个服务端全部通过；产出 href 格式差异记录 |
 
 **Phase 0 决策门**：T-0.3 通过 → 维持自研方案；未通过 → 启动 PRD 8.3 退出条件（改用 `webdav@5` + esbuild），并回写 PRD 5.8。
 
@@ -134,17 +146,17 @@ graph LR
 
 | ID | 任务 | 对应需求 | 估时 | 依赖 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| T-1.1 | `path.ts`：段级编码、href 归一化与解码、尾斜杠统一、路径穿越防御 | PRD 5.3、NFR-2.5 | 1.5 | T-0.3 | 单测覆盖空格/中文/`#`/`?`/`&`/`+`/`%`/`..`，覆盖率 ≥ 90% |
-| T-1.2 | `request.ts` 单一出口：Basic 认证、超时、取消、按连接 `https.Agent`、日志钩子 | FR-1.5 P0、NFR-1.5、NFR-2.3 | 2.0 | T-0.3 | 自签名证书仅对该连接放行；全局 TLS 开关未被修改 |
-| T-1.3 | `propfind.ts`：请求构造 + multistatus 解析 + **过滤自身条目** | FR-3.2 | 1.5 | T-1.1 | 三个服务端的真实响应样本均解析正确 |
-| T-1.4 | `client.ts`：MVP 动作 `propfind` / `get` / `put` / `options` | FR-3.1~3.4 | 1.0 | T-1.2, T-1.3 | — |
-| T-1.5 | `errors.ts` + `fs/errorMap.ts`：401/403/404/超时四类 | FR-4.2 | 0.5 | T-1.2 | 单测覆盖四类映射 |
-| T-1.6 | `connection/`：配置 CRUD + SecretStorage + resolver 懒加载 | FR-1.1、FR-1.2 | 1.0 | — | 凭据不落 `settings.json`；凭据缺失时抛可识别错误 |
-| T-1.7 | `extension.ts`：`onFileSystem:webdav` 激活事件 + **同步注册 provider** | PRD 5.2 | 0.5 | T-1.6 | 注册耗时 < 50ms（NFR-1.4）；`await` 之前完成注册 |
-| T-1.8 | `fs/provider.ts`：`stat` / `readDirectory` / `readFile` / `writeFile`（含 `{create, overwrite}` 边界） | FR-3.1~3.4 | 2.0 | T-1.4, T-1.7 | 新建文件、另存为、覆盖保存行为正确 |
-| T-1.9 | 命令：新增连接、输入远程路径并打开工作区 | FR-1.1、FR-2.1 简化版 | 1.0 | T-1.6 | 重载后资源管理器正常展现目录树 |
-| T-1.10 | `log/channel.ts`：OutputChannel + 强制脱敏 | FR-6.1 | 0.5 | T-1.2 | 单测断言日志中不含密码/`Authorization` 明文 |
-| T-1.11 | `package.json` 能力声明（`virtualWorkspaces` / `untrustedWorkspaces` / 无 `browser` 入口）+ 打包本地安装验证 | PRD 2.4、NFR-3.3 | 0.5 | 全部 | VSIX 可安装并完成一次完整读写 |
+| ✅ T-1.1 | `path.ts`：段级编码、href 归一化与解码、尾斜杠统一、路径穿越防御 | PRD 5.3、NFR-2.5 | 1.5 | T-0.3 | 单测覆盖空格/中文/`#`/`?`/`&`/`+`/`%`/`..`，覆盖率 ≥ 90% |
+| ✅ T-1.2 | `request.ts` 单一出口：Basic 认证、超时、取消、按连接 `https.Agent`、日志钩子 | FR-1.5 P0、NFR-1.5、NFR-2.3 | 2.0 | T-0.3 | 自签名证书仅对该连接放行；全局 TLS 开关未被修改 |
+| ✅ T-1.3 | `propfind.ts`：请求构造 + multistatus 解析 + **过滤自身条目** | FR-3.2 | 1.5 | T-1.1 | 三个服务端的真实响应样本均解析正确 |
+| ✅ T-1.4 | `client.ts`：MVP 动作 `propfind` / `get` / `put` / `options` | FR-3.1~3.4 | 1.0 | T-1.2, T-1.3 | — |
+| ✅ T-1.5 | `errors.ts` + `fs/errorMap.ts`：401/403/404/超时四类 | FR-4.2 | 0.5 | T-1.2 | 单测覆盖四类映射 |
+| ✅ T-1.6 | `connection/`：配置 CRUD + SecretStorage + resolver 懒加载 | FR-1.1、FR-1.2 | 1.0 | — | 凭据不落 `settings.json`；凭据缺失时抛可识别错误 |
+| ✅ T-1.7 | `extension.ts`：`onFileSystem:webdav` 激活事件 + **同步注册 provider** | PRD 5.2 | 0.5 | T-1.6 | 注册耗时 < 50ms（NFR-1.4）；`await` 之前完成注册 |
+| ✅ T-1.8 | `fs/provider.ts`：`stat` / `readDirectory` / `readFile` / `writeFile`（含 `{create, overwrite}` 边界） | FR-3.1~3.4 | 2.0 | T-1.4, T-1.7 | 新建文件、另存为、覆盖保存行为正确 |
+| ✅ T-1.9 | 命令：新增连接、输入远程路径并打开工作区 | FR-1.1、FR-2.1 简化版 | 1.0 | T-1.6 | 重载后资源管理器正常展现目录树 |
+| ✅ T-1.10 | `log/channel.ts`：OutputChannel + 强制脱敏 | FR-6.1 | 0.5 | T-1.2 | 单测断言日志中不含密码/`Authorization` 明文 |
+| ✅ T-1.11 | `package.json` 能力声明（`virtualWorkspaces` / `untrustedWorkspaces` / 无 `browser` 入口）+ 打包本地安装验证 | PRD 2.4、NFR-3.3 | 0.5 | 全部 | VSIX 可安装并完成一次完整读写 |
 
 **Phase 1 Definition of Done**
 - 在 Nextcloud 与 `mod_dav` 上完成：打开工作区 → 浏览含中文/空格文件名的目录 → 打开文件 → 修改 → `Cmd+S` 保存成功 → 服务端内容已更新。
@@ -157,16 +169,16 @@ graph LR
 
 | ID | 任务 | 对应需求 | 估时 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
-| T-2.1 | `fs/cache.ts`：TTL 缓存 + `readDirectory` 回填子项 stat + 写操作同步失效 | NFR-1.1 | 2.0 | 展开目录后逐个 `stat` 不再产生网络请求 |
-| T-2.2 | in-flight 请求合并（同路径并发去重） | NFR-1.2 | 0.5 | 并发 20 次 `stat` 同路径仅发 1 个请求 |
-| T-2.3 | 补全 FSP：`createDirectory` / `delete` / `rename` / `copy` / `watch` no-op 语义 | FR-3.5~3.9 | 2.0 | `COPY` 返回 405/501 时正确回退为 read+write |
-| T-2.4 | QuickPick 层级目录导航（展开/返回上级/选择当前/手动输入跳转） | FR-2.1 | 1.5 | — |
-| T-2.5 | TreeView 侧边栏面板 + 上下文菜单（当前窗口/新窗口/加入工作区/复制路径） | FR-2.2 | 2.5 | — |
-| T-2.6 | 连接测试与列表管理（编辑/重命名/删除/复制，删除时清理凭据） | FR-1.3、FR-1.4 | 1.5 | 测试连接能区分 401/403/404/证书错误/超时 |
-| T-2.7 | 最近打开历史（不含凭据） | FR-2.3 | 0.5 | 历史记录中无任何敏感信息 |
-| T-2.8 | 刷新命令 + TreeView 刷新按钮（按子树失效缓存） | FR-2.4 | 0.5 | 外部修改后刷新即可见 |
-| T-2.9 | 状态栏指示器 + 首次打开能力提示（可"不再提示"） | FR-4.3、FR-4.5 | 1.0 | — |
-| T-2.10 | **兼容性矩阵首轮实测**，回写 PRD 5.6 全部"待验证"格 | NFR-3.1 | 2.0 | 6 个服务端 × 7 步冒烟用例全部执行并记录结论 |
+| ✅ T-2.1 | `fs/cache.ts`：TTL 缓存 + `readDirectory` 回填子项 stat + 写操作同步失效 | NFR-1.1 | 2.0 | 展开目录后逐个 `stat` 不再产生网络请求 |
+| ✅ T-2.2 | in-flight 请求合并（同路径并发去重） | NFR-1.2 | 0.5 | 并发 20 次 `stat` 同路径仅发 1 个请求 |
+| ✅ T-2.3 | 补全 FSP：`createDirectory` / `delete` / `rename` / `copy` / `watch` no-op 语义 | FR-3.5~3.9 | 2.0 | `COPY` 返回 405/501 时正确回退为 read+write |
+| ✅ T-2.4 | QuickPick 层级目录导航（展开/返回上级/选择当前/手动输入跳转） | FR-2.1 | 1.5 | — |
+| ✅ T-2.5 | TreeView 侧边栏面板 + 上下文菜单（当前窗口/新窗口/加入工作区/复制路径） | FR-2.2 | 2.5 | — |
+| ✅ T-2.6 | 连接测试与列表管理（编辑/重命名/删除/复制，删除时清理凭据） | FR-1.3、FR-1.4 | 1.5 | 测试连接能区分 401/403/404/证书错误/超时 |
+| ✅ T-2.7 | 最近打开历史（不含凭据） | FR-2.3 | 0.5 | 历史记录中无任何敏感信息 |
+| ✅ T-2.8 | 刷新命令 + TreeView 刷新按钮（按子树失效缓存） | FR-2.4 | 0.5 | 外部修改后刷新即可见 |
+| ✅ T-2.9 | 状态栏指示器 + 首次打开能力提示（可"不再提示"） | FR-4.3、FR-4.5 | 1.0 | — |
+| ⚠ T-2.10 | **兼容性矩阵首轮实测**，回写 PRD 5.6 全部"待验证"格 | NFR-3.1 | 2.0 | 6 个服务端 × 7 步冒烟用例全部执行并记录结论 |
 
 **待决策项关闭点**：Phase 2 开工前须关闭 PRD **8.1.1（大小写敏感性）**——它决定 `registerFileSystemProvider` 的注册参数，改动成本随开发推进快速上升。**8.1.2（多根工作区）** 须在 T-2.5 前关闭。
 
@@ -176,15 +188,15 @@ graph LR
 
 | ID | 任务 | 对应需求 | 估时 | 验收标准 |
 | :--- | :--- | :--- | :--- | :--- |
-| T-3.1 | 传输进度通知 + 取消 + 大文件阈值保护（默认 50MB） | FR-4.1、FR-3.3、PRD 5.5 | 1.5 | 超阈值文件明确拒绝并说明原因，不 OOM |
-| T-3.2 | ETag / `If-Match` 冲突检测与 412 三选一处理 | FR-4.4 | 1.5 | 模拟并发修改可稳定触发冲突面板 |
-| T-3.3 | 401 重认证流程 + 请求重试 | FR-1.2、FR-4.2 | 1.0 | 密码过期后引导重输，不反复弹窗 |
-| T-3.4 | Digest 与 Bearer 认证 | FR-1.5 P1 | 2.0 | `mod_dav` + Digest 环境端到端通过 |
-| T-3.5 | 代理支持（继承 `http.proxy`，按连接可覆盖） | FR-1.6 | 1.0 | — |
-| T-3.6 | 并发上限队列 + 同文件写串行化 | NFR-1.3 | 1.0 | 单连接并发请求数不超过配置值 |
-| T-3.7 | 性能基准脚本 + NFR-1.4 五项指标达标验证 | NFR-1.4 | 1.0 | 1000 项目录 P95 < 2s 等五项全部达标 |
-| T-3.8 | Webview 连接管理面板（含 URL 一键解析、服务端预设模板） | FR-1.1 增强 | 3.0 | — |
-| T-3.9 | 按文件名查找（递归 PROPFIND，限深度与条目数）+ 全文搜索不支持提示 | FR-5.1 v1.0 方案 | 1.5 | 搜索入口不再静默无结果 |
+| ✅ T-3.1 | 传输进度通知 + 取消 + 大文件阈值保护（默认 50MB） | FR-4.1、FR-3.3、PRD 5.5 | 1.5 | 超阈值文件明确拒绝并说明原因，不 OOM |
+| ✅ T-3.2 | ETag / `If-Match` 冲突检测与 412 三选一处理 | FR-4.4 | 1.5 | 模拟并发修改可稳定触发冲突面板 |
+| ✅ T-3.3 | 401 重认证流程 + 请求重试 | FR-1.2、FR-4.2 | 1.0 | 密码过期后引导重输，不反复弹窗 |
+| ✅ T-3.4 | Digest 与 Bearer 认证 | FR-1.5 P1 | 2.0 | `mod_dav` + Digest 环境端到端通过 |
+| ✅ T-3.5 | 代理支持（继承 `http.proxy`，按连接可覆盖） | FR-1.6 | 1.0 | — |
+| ✅ T-3.6 | 并发上限队列 + 同文件写串行化 | NFR-1.3 | 1.0 | 单连接并发请求数不超过配置值 |
+| ✅ T-3.7 | 性能基准脚本 + NFR-1.4 五项指标达标验证 | NFR-1.4 | 1.0 | 1000 项目录 P95 < 2s 等五项全部达标 |
+| ✅ T-3.8 | Webview 连接管理面板（含 URL 一键解析、服务端预设模板） | FR-1.1 增强 | 3.0 | — |
+| ✅ T-3.9 | 按文件名查找（递归 PROPFIND，限深度与条目数）+ 全文搜索不支持提示 | FR-5.1 v1.0 方案 | 1.5 | 搜索入口不再静默无结果 |
 
 ---
 
@@ -192,10 +204,10 @@ graph LR
 
 | ID | 任务 | 对应需求 | 估时 |
 | :--- | :--- | :--- | :--- |
-| T-4.1 | 自定义请求头 | FR-1.5 P2 | 1.0 |
-| T-4.2 | 只读连接（`isReadonly` 注册） | FR-1.7 | 0.5 |
-| T-4.3 | 可选目录轮询刷新（默认关闭） | FR-3.9 P2 | 1.0 |
-| T-4.4 | 全文搜索接入（视 proposed API 状态，可能不启动） | FR-5.1 v2.0 | 1.0 |
+| ✅ T-4.1 | 自定义请求头 | FR-1.5 P2 | 1.0 |
+| ✅ T-4.2 | 只读连接（`isReadonly` 注册） | FR-1.7 | 0.5 |
+| ✅ T-4.3 | 可选目录轮询刷新（默认关闭） | FR-3.9 P2 | 1.0 |
+| ⏸ T-4.4 | 全文搜索接入（视 proposed API 状态，可能不启动） | FR-5.1 v2.0 | 1.0 |
 
 ---
 

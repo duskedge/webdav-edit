@@ -1,0 +1,142 @@
+# WebDAV 测试服务端集群（开发计划 T-0.2 / §2.2）
+#
+# 本文件是测试环境的**唯一事实来源**。禁止在服务器上手工配置服务——
+# 否则环境会静默漂移且无人可复现（§2.1）。
+#
+# 部署：内网 home-debian（实际主机名 nas-debian）常驻；本机离线开发同样用这份文件。
+#
+#   BUILD_PROXY=http://192.168.50.2:1081 docker compose build   # 构建（可选代理）
+#   PUBLIC_HOST=192.168.50.9 docker compose up -d                # 供局域网访问时必须设置
+#   docker compose up -d          启动全部
+#   ./seed.sh                     播种测试数据集
+#   ./reset.sh                    复位到已知状态
+#
+# 端口分配（宿主机）：
+#   8081 Nextcloud   8082 ownCloud   8083 AList
+#   8084 Apache mod_dav (Digest)     8085 Nginx 原生 DAV（能力残缺场景）
+#   8443 Apache over TLS（自签名，用于 NFR-2.3）
+
+name: webdav-testbed
+
+services:
+  # ── 最主流目标。验证 /remote.php/dav/files/<user>/ 这类 base path 前缀拼接 ──
+  nextcloud:
+    image: nextcloud:29-apache
+    container_name: wd-nextcloud
+    restart: unless-stopped
+    ports:
+      - '8081:80'
+    environment:
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: ${DAV_USER:-davtest}
+      NEXTCLOUD_ADMIN_PASSWORD: ${DAV_PASS:-davtest-pw}
+      # 允许来自内网与 CI 的任意 Host 头，否则 Nextcloud 会拒绝请求
+      NEXTCLOUD_TRUSTED_DOMAINS: '*'
+    volumes:
+      - nextcloud-data:/var/www/html
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost/status.php']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ── 与 Nextcloud 同源但版本行为有差异 ──
+  owncloud:
+    image: owncloud/server:10.15
+    container_name: wd-owncloud
+    restart: unless-stopped
+    ports:
+      - '8082:8080'
+    environment:
+      # ownCloud 用该值判定「可信域」。按 IP 访问时必须与实际访问地址一致，
+      # 否则一律 400 untrusted domain——`OWNCLOUD_TRUSTED_DOMAINS: '*'` 在
+      # 10.x 上不被当作通配符，实测无效。
+      OWNCLOUD_DOMAIN: ${PUBLIC_HOST:-localhost}:8082
+      OWNCLOUD_TRUSTED_DOMAINS: 'localhost:8082,${PUBLIC_HOST:-localhost}:8082'
+      ADMIN_USERNAME: ${DAV_USER:-davtest}
+      ADMIN_PASSWORD: ${DAV_PASS:-davtest-pw}
+      OWNCLOUD_DB_TYPE: sqlite
+    volumes:
+      - owncloud-data:/mnt/data
+    healthcheck:
+      test: ['CMD', '/usr/bin/healthcheck']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  # ── 对象存储后端。MOVE/COPY 可能不支持，验证能力探测与回退（FR-3.8）──
+  alist:
+    build:
+      context: ./alist
+    container_name: wd-alist
+    restart: unless-stopped
+    ports:
+      - '8083:5244'
+    environment:
+      PUID: '0'
+      PGID: '0'
+      UMASK: '022'
+    volumes:
+      - alist-data:/opt/alist/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:5244/ping']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # ── 唯一可获得 Digest 认证的环境。无此项则 FR-1.5 P1 无法开发 ──
+  # 同时提供 TLS 端点（自签名证书），用于验证 NFR-2.3 的按连接放行。
+  apache-dav:
+    build:
+      context: ./apache
+      args:
+        DAV_USER: ${DAV_USER:-davtest}
+        DAV_PASS: ${DAV_PASS:-davtest-pw}
+        # 构建期代理：BUILD_PROXY=http://host:port docker compose build
+        http_proxy: ${BUILD_PROXY:-}
+        https_proxy: ${BUILD_PROXY:-}
+    container_name: wd-apache-dav
+    restart: unless-stopped
+    ports:
+      - '8084:80'
+      - '8443:443'
+    volumes:
+      - apache-data:/var/www/webdav
+    healthcheck:
+      # 用 bash 内建的 /dev/tcp，避免为健康检查多装一个 curl
+      test: ['CMD-SHELL', 'timeout 3 bash -c "</dev/tcp/127.0.0.1/80" || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ── 能力残缺场景（刻意为之）──
+  # 官方 nginx 只带 --with-http_dav_module：支持 PUT/DELETE/MKCOL/MOVE/COPY，
+  # 但**不支持 PROPFIND**（那需要第三方 nginx-dav-ext-module）。
+  # 我们**故意不装** dav-ext，以此固化 PRD 风险表 A1 的检出路径：
+  # 连接测试阶段应给出「需启用 nginx-dav-ext-module」的明确提示，而非一个裸 405。
+  nginx-dav:
+    build:
+      context: ./nginx
+    container_name: wd-nginx-dav
+    restart: unless-stopped
+    ports:
+      - '8085:80'
+    volumes:
+      - nginx-data:/var/www/webdav
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || true; exit 0']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  nextcloud-data:
+  owncloud-data:
+  alist-data:
+  apache-data:
+  nginx-data:

@@ -311,18 +311,31 @@ Entry    = { stat, children?, etag?, expireAt }
 
 ### 5.6 兼容性矩阵
 
-发布前须逐项实测填写；空白项代表尚未验证，**不得默认为可用**。
+> **已于 2026-09-08 在 `home-debian`（nas-debian）实测**，由 `npm run test:compat` 自动采集。
+> 完整报告见 [compat-matrix.generated.md](./compat-matrix.generated.md)，勿手工编辑。
 
-| 服务端 | 典型 Base Path | 认证 | `PROPFIND Depth:0` | `MOVE` | `COPY` | `ETag` 稳定 | 备注 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Nextcloud | `/remote.php/dav/files/<user>/` | Basic（建议应用专用密码） | 待验证 | 待验证 | 待验证 | 待验证 | 建议提供"Nextcloud"预设模板自动补全前缀 |
-| ownCloud | 同上（版本相关） | Basic | 待验证 | 待验证 | 待验证 | 待验证 | |
-| AList | `/dav/` | Basic | 待验证 | 待验证 | 待验证 | 待验证 | 后端为对象存储时 `MOVE`/`COPY` 可能不支持 |
-| 群晖 DSM WebDAV Server | 待验证 | Basic | 待验证 | 待验证 | 待验证 | 待验证 | 需确认端口（HTTP/HTTPS 分离） |
-| Nginx `ngx_http_dav_module` | 自定义 | 由 Nginx 配置决定 | 待验证 | 待验证 | 待验证 | 待验证 | 原生模块**不支持 PROPFIND**，需 `nginx-dav-ext-module`，须在文档中明示 |
-| Apache `mod_dav` | 自定义 | Basic / **Digest** | 待验证 | 待验证 | 待验证 | 待验证 | Digest 为常见默认配置，对应 FR-1.5 |
+| 服务端 | Base Path | PROPFIND | Depth:0 | MOVE | COPY | ETag | 中文/空格名 | 递归删除 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Nextcloud 29 | `/remote.php/dav/files/<user>/` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ownCloud 10.15 | `/remote.php/dav/files/<user>/` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| AList | `/dav/<挂载点>` | ✓ | ✓ | ✓ | **✗ 500** | ✓ | ✓ | ✓ |
+| Apache mod_dav (Digest) | 自定义 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Apache mod_dav (Basic) | 自定义 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Apache mod_dav (TLS 自签名) | 自定义 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Nginx 原生 DAV | 自定义 | **✗ 405** | — | — | — | — | — | — |
+| 群晖 DSM | 待验证 | 待验证 | 待验证 | 待验证 | 待验证 | 待验证 | 待验证 | 待验证 |
 
-每个服务端至少提供一组冒烟用例：连接测试 → 列目录（含中文/空格文件名）→ 读文件 → 写文件 → 新建目录 → 重命名 → 删除。
+**实测暴露的三处服务端差异（均已在代码中处理）**：
+
+1. **Apache mod_dav 对无尾斜杠的集合 URL 返回 301**，而 Nextcloud 直接返回 207。
+   客户端原先不跟随重定向，会导致**所有 Apache/mod_dav 用户完全不可用**。
+   已实现同源重定向跟随（跨源一律拒绝，否则 `Authorization` 会被发往其他主机）。
+2. **AList 对 `COPY` 返回裸 500**，而非规范建议的 405/501。
+   原降级条件只覆盖 `NotSupported`，已扩大到 `ServerError`（见 FR-3.8）。
+3. **Apache 返回小写百分号编码**（`%e4%b8%ad`）且不编码 `+`、`()`，
+   与 Nextcloud 的大写编码并存——解码逻辑须大小写无关（已由 5.3 单测覆盖）。
+
+**群晖 DSM**：无容器化途径，维持「社区反馈驱动」，不得默认为可用。
 
 ### 5.7 核心业务流程图
 
@@ -464,7 +477,9 @@ Phase 1 开工首周完成一个约 200 行的最小 spike：对 Nextcloud 与 A
 ### 8.1 待决策项
 > 以下需在对应 Phase 开工前给出结论并回写本文档。
 
-- **8.1.1 路径大小写敏感性**：`registerFileSystemProvider` 的 `isCaseSensitive` 是全局一次性选项，但不同服务端/后端存储的大小写敏感性不同（Linux 后端敏感、Windows/部分对象存储不敏感）。需决策：统一按敏感处理，还是按连接配置且接受 provider 层的行为不一致。
+- ~~**8.1.1 路径大小写敏感性**~~ ✅ **已决策（2026-09-08）：维持 `isCaseSensitive: true`。**
+  - 5.6 矩阵中六个可测服务端（Nextcloud / ownCloud / AList / Apache ×3）全部运行于 Linux 后端，路径大小写敏感，与该设置一致。
+  - `isCaseSensitive` 是 provider 级一次性选项，无法按连接配置；若未来需支持大小写不敏感后端（如 Windows 或部分对象存储），须整体评估而非按连接切换。
 - **8.1.2 多根工作区支持范围**：是否允许"本地目录 + 远程目录"混合的 `.code-workspace`；混合后 VSCode 的虚拟工作区判定与能力降级行为需实测。
 - **8.1.3 `pathPrefix` 的归属**：路径前缀放在连接配置中（URI 更短、迁移友好）还是放入 URI path（更直观）。当前 5.1 采用前者，需确认无歧义场景。
 

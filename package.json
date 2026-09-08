@@ -1,0 +1,422 @@
+{
+  "name": "webdav-edit",
+  "displayName": "WebDAV Workspace",
+  "description": "将远程 WebDAV 目录作为原生工作区打开，直接浏览与编辑远程文件。仅支持桌面版 VSCode。",
+  "version": "0.1.0",
+  "publisher": "webdav-edit",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "webdav",
+    "nextcloud",
+    "owncloud",
+    "alist",
+    "nas",
+    "remote"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onFileSystem:webdav",
+    "onView:webdavEdit.connections"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "远程文件内容不受信任，扩展不会执行工作区中的任何脚本。"
+    }
+  },
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "webdavEdit.addConnection",
+        "title": "新增连接",
+        "category": "WebDAV",
+        "icon": "$(add)"
+      },
+      {
+        "command": "webdavEdit.manageConnections",
+        "title": "管理连接",
+        "category": "WebDAV",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "webdavEdit.openFolder",
+        "title": "连接并打开远程目录",
+        "category": "WebDAV",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "webdavEdit.refresh",
+        "title": "刷新",
+        "category": "WebDAV",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "webdavEdit.showLog",
+        "title": "显示诊断日志",
+        "category": "WebDAV",
+        "icon": "$(output)"
+      },
+      {
+        "command": "webdavEdit.browseConnection",
+        "title": "浏览远程目录…",
+        "category": "WebDAV",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "webdavEdit.openNodeInCurrentWindow",
+        "title": "在当前窗口作为工作区打开",
+        "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.openNodeInNewWindow",
+        "title": "在新窗口中打开",
+        "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.addNodeToWorkspace",
+        "title": "添加到当前工作区",
+        "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.copyRemotePath",
+        "title": "复制远程路径",
+        "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.findByName",
+        "title": "按文件名查找",
+        "category": "WebDAV",
+        "icon": "$(search)"
+      },
+      {
+        "command": "webdavEdit.searchInFiles",
+        "title": "全文搜索（说明为何不可用）",
+        "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.openConnectionEditor",
+        "title": "打开连接管理面板",
+        "category": "WebDAV",
+        "icon": "$(settings-gear)"
+      }
+    ],
+    "configuration": {
+      "title": "WebDAV Workspace",
+      "properties": {
+        "webdavEdit.connections": {
+          "type": "array",
+          "default": [],
+          "scope": "application",
+          "markdownDescription": "已保存的 WebDAV 连接（**不含密码**，密码存于 SecretStorage）。建议通过命令面板管理而非手工编辑。",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "alias",
+              "baseUrl"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "唯一标识，仅允许 [a-z0-9-]"
+              },
+              "alias": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "如 https://cloud.example.com"
+              },
+              "pathPrefix": {
+                "type": "string",
+                "default": "/"
+              },
+              "username": {
+                "type": "string"
+              },
+              "authType": {
+                "type": "string",
+                "enum": [
+                  "basic",
+                  "digest",
+                  "bearer",
+                  "none"
+                ],
+                "default": "basic"
+              },
+              "ignoreSsl": {
+                "type": "boolean",
+                "default": false
+              },
+              "readonly": {
+                "type": "boolean",
+                "default": false
+              },
+              "headers": {
+                "type": "object",
+                "description": "自定义请求头。认证类头部（Authorization / Cookie 等）会被忽略——凭据必须走 SecretStorage。",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "webdavEdit.cacheTtlSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 300,
+          "scope": "application",
+          "markdownDescription": "元数据缓存 TTL（秒）。设为 `0` 可禁用缓存（调试用，会显著增加 PROPFIND 请求量）。"
+        },
+        "webdavEdit.maxFileSizeMB": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "scope": "application",
+          "markdownDescription": "允许读写的单文件大小上限（MB）。VSCode 的 FileSystemProvider API 不支持流式读写，超出上限会撑爆扩展宿主内存。"
+        },
+        "webdavEdit.maxConcurrentRequests": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 32,
+          "scope": "application",
+          "description": "单个连接的最大并发 HTTP 请求数，避免打爆低性能 NAS 服务端。"
+        },
+        "webdavEdit.connectTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "scope": "application",
+          "description": "建立连接超时（毫秒）。"
+        },
+        "webdavEdit.requestTimeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "scope": "application",
+          "description": "读写请求超时（毫秒）。"
+        },
+        "webdavEdit.logLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "error",
+            "info",
+            "debug"
+          ],
+          "default": "info",
+          "scope": "application",
+          "markdownDescription": "诊断日志级别。`debug` 会记录每次 HTTP 请求的方法/URL/状态码/耗时（凭据始终脱敏）。"
+        },
+        "webdavEdit.proxy": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "markdownDescription": "HTTP 代理地址（FR-1.6），如 `http://proxy.corp:8080`。留空则继承 VSCode 的 `#http.proxy#`，再退回 `https_proxy` 环境变量。"
+        },
+        "webdavEdit.noProxy": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "markdownDescription": "绕过代理的主机列表，逗号分隔，遵循 `no_proxy` 惯例（支持 `*` 与 `.suffix`）。留空则读取 `no_proxy` 环境变量。"
+        },
+        "webdavEdit.maxRetries": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "scope": "application",
+          "markdownDescription": "幂等请求（GET/HEAD/PROPFIND/OPTIONS）遇到超时或 5xx 时的重试次数。写操作**永不**自动重试，以免覆盖他人的修改。"
+        },
+        "webdavEdit.search.maxDepth": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 20,
+          "scope": "application",
+          "markdownDescription": "「按文件名查找」的最大递归深度。递归 PROPFIND 在大目录树上代价很高，上限用于防止搜索失控。"
+        },
+        "webdavEdit.search.maxDirectories": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 5000,
+          "scope": "application",
+          "description": "「按文件名查找」最多扫描的目录数量。"
+        },
+        "webdavEdit.pollIntervalSeconds": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 600,
+          "scope": "application",
+          "markdownDescription": "目录轮询刷新间隔（秒）。`0` 表示关闭（默认）。\n\nWebDAV 协议无变更推送能力，轮询是检测外部改动的唯一近似手段，但每轮都会产生 PROPFIND 请求。建议优先使用「WebDAV: 刷新」命令。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "webdavEdit",
+          "title": "WebDAV",
+          "icon": "resources/webdav.svg"
+        }
+      ]
+    },
+    "views": {
+      "webdavEdit": [
+        {
+          "id": "webdavEdit.connections",
+          "name": "连接",
+          "icon": "resources/webdav.svg",
+          "contextualTitle": "WebDAV 连接"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "webdavEdit.connections",
+        "contents": "尚未配置任何 WebDAV 连接。\n[新增连接](command:webdavEdit.addConnection)\n\nWebDAV 工作区为虚拟工作区，终端、调试、Git 与多数语言服务不可用。"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "webdavEdit.addConnection",
+          "when": "view == webdavEdit.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "webdavEdit.refresh",
+          "when": "view == webdavEdit.connections",
+          "group": "navigation@2"
+        },
+        {
+          "command": "webdavEdit.findByName",
+          "when": "view == webdavEdit.connections",
+          "group": "navigation@3"
+        },
+        {
+          "command": "webdavEdit.showLog",
+          "when": "view == webdavEdit.connections",
+          "group": "1_diag"
+        },
+        {
+          "command": "webdavEdit.openConnectionEditor",
+          "when": "view == webdavEdit.connections",
+          "group": "1_diag"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "webdavEdit.browseConnection",
+          "when": "view == webdavEdit.connections && viewItem == webdavConnection",
+          "group": "navigation@1"
+        },
+        {
+          "command": "webdavEdit.openNodeInCurrentWindow",
+          "when": "view == webdavEdit.connections && viewItem =~ /webdavConnection|webdavDirectory/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "webdavEdit.openNodeInNewWindow",
+          "when": "view == webdavEdit.connections && viewItem =~ /webdavConnection|webdavDirectory/",
+          "group": "1_open@2"
+        },
+        {
+          "command": "webdavEdit.addNodeToWorkspace",
+          "when": "view == webdavEdit.connections && viewItem =~ /webdavConnection|webdavDirectory/",
+          "group": "1_open@3"
+        },
+        {
+          "command": "webdavEdit.copyRemotePath",
+          "when": "view == webdavEdit.connections && viewItem =~ /webdavDirectory|webdavFile/",
+          "group": "2_copy"
+        },
+        {
+          "command": "webdavEdit.refresh",
+          "when": "view == webdavEdit.connections && viewItem =~ /webdavConnection|webdavDirectory/",
+          "group": "3_refresh"
+        },
+        {
+          "command": "webdavEdit.manageConnections",
+          "when": "view == webdavEdit.connections && viewItem == webdavConnection",
+          "group": "9_manage"
+        },
+        {
+          "command": "webdavEdit.openConnectionEditor",
+          "when": "view == webdavEdit.connections && viewItem == webdavConnection",
+          "group": "9_manage"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "webdavEdit.openNodeInCurrentWindow",
+          "when": "false"
+        },
+        {
+          "command": "webdavEdit.openNodeInNewWindow",
+          "when": "false"
+        },
+        {
+          "command": "webdavEdit.addNodeToWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "webdavEdit.copyRemotePath",
+          "when": "false"
+        },
+        {
+          "command": "webdavEdit.browseConnection",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run check && npm run build -- --minify",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "check": "tsc --noEmit && node scripts/check-activation.mjs && node scripts/check-manifest.mjs && node scripts/check-webview.mjs && node scripts/check-layering.mjs && npm run lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint src test scripts",
+    "test:compat": "vitest run --config vitest.compat.config.mts",
+    "bench": "node scripts/benchmark.mjs",
+    "package": "npm run check && npm run build -- --minify && vsce package --no-dependencies --allow-missing-repository",
+    "install-local": "npm run package && code --install-extension webdav-edit-$npm_package_version.vsix --force"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/vscode": "^1.75.0",
+    "@typescript-eslint/eslint-plugin": "^8.69.0",
+    "@typescript-eslint/parser": "^8.69.0",
+    "@vitest/coverage-v8": "^5.0.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "typescript": "^5.5.0",
+    "vitest": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mulyzhou/webdav-edit"
+  },
+  "icon": "resources/icon.png"
+}

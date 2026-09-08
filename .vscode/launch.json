@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 按 F5 启动「扩展开发宿主」——一个加载了本扩展的独立 VSCode 窗口。
+      // 断点直接打在 src/*.ts 上（esbuild 产出 sourcemap）。
+      "name": "运行扩展",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
+    },
+    {
+      // 直接打开真机上的 WebDAV 目录，省去每次手动配连接。
+      // 首次仍需在新窗口里执行「WebDAV: 新增连接」填写凭据。
+      "name": "运行扩展（并打开远程目录）",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--disable-extensions"
+      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: watch",
+      "env": {
+        "WEBDAV_DEV": "1"
+      }
+    },
+    {
+      "name": "调试单测（Vitest）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run", "--no-file-parallelism"],
+      "console": "integratedTerminal",
+      "smartStep": true,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "调试兼容性用例（需 DAV_HOST）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run", "--config", "vitest.compat.config.mts", "--no-file-parallelism"],
+      "console": "integratedTerminal",
+      "env": { "DAV_HOST": "192.168.50.9" },
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
