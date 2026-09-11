@@ -16,6 +16,7 @@ tsconfig.json
 **/*.map
 **/*.ts
 .gitignore
+.github/**
 !resources/**
 coverage/**
 .vscode-test/**
