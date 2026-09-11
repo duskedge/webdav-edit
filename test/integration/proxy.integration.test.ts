@@ -17,6 +17,9 @@ import * as net from 'net';
 import * as tls from 'tls';
 import type { AddressInfo } from 'net';
 import { execFileSync } from 'child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { HttpClient } from '../../src/webdav/request.ts';
 import { WebdavClient } from '../../src/webdav/client.ts';
 import { TestWebdavServer } from '../helpers/webdavServer.ts';
@@ -110,20 +113,30 @@ function startProxy(requireAuth?: string): Promise<{
 // ---- 自签名 TLS 版 WebDAV 服务端（验证 CONNECT + TLS 握手）----
 
 function selfSignedCert(): { key: string; cert: string } {
-  // 用 openssl 现场生成，避免把证书material提交进仓库
-  const out = execFileSync(
-    'openssl',
-    [
-      'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-      '-subj', '/CN=127.0.0.1',
-      '-addext', 'subjectAltName=IP:127.0.0.1',
-      '-keyout', '/dev/stdout', '-out', '/dev/stdout',
-    ],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-  );
-  const key = /-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/.exec(out)![0];
-  const cert = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/.exec(out)![0];
-  return { key, cert };
+  // 用 openssl 现场生成，避免把证书 material 提交进仓库。使用临时文件而不是
+  // /dev/stdout，兼容 GitHub Runner、Windows 与受限沙箱环境。
+  const directory = mkdtempSync(join(tmpdir(), 'webdav-edit-cert-'));
+  const keyPath = join(directory, 'key.pem');
+  const certPath = join(directory, 'cert.pem');
+
+  try {
+    execFileSync(
+      'openssl',
+      [
+        'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+        '-subj', '/CN=127.0.0.1',
+        '-addext', 'subjectAltName=IP:127.0.0.1',
+        '-keyout', keyPath, '-out', certPath,
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore'] }
+    );
+    return {
+      key: readFileSync(keyPath, 'utf8'),
+      cert: readFileSync(certPath, 'utf8'),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 let origin: TestWebdavServer;
