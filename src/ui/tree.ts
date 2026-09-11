@@ -7,11 +7,12 @@
 import * as vscode from 'vscode';
 import type { ConnectionConfig } from '../connection/types.ts';
 import { isSecure } from '../connection/types.ts';
-import type { ConnectionStore } from '../connection/store.ts';
+import { MissingCredentialsError, type ConnectionStore } from '../connection/store.ts';
 import type { ConnectionResolver } from '../connection/resolver.ts';
 import { isWebdavError } from '../webdav/errors.ts';
 import { buildUri } from '../fs/provider.ts';
 import { log } from '../log/channel.ts';
+import { promptMissingCredentials } from './reauth.ts';
 
 export type TreeNode = ConnectionNode | DirectoryNode | MessageNode;
 
@@ -105,6 +106,22 @@ export class WebdavTreeProvider implements vscode.TreeDataProvider<TreeNode> {
           })
         );
     } catch (err) {
+      if (err instanceof MissingCredentialsError) {
+        log.warn(`TreeView 读取 ${path} 时缺少连接 ${err.connectionId} 的凭据`);
+        const updated = await promptMissingCredentials(this.store, err.connectionId);
+        if (updated) {
+          this.resolver.invalidate(err.connectionId);
+          return this.getChildren(node);
+        }
+        return [
+          {
+            kind: 'message',
+            text: '⚠ 缺少密码或 Token，请通过“管理连接”重新输入',
+            tooltip: '右键连接选择“管理连接”，然后选择“更新密码”',
+          },
+        ];
+      }
+
       // 失败必须在树里可见，否则用户会把「连不上」误认成「空目录」
       const message = isWebdavError(err) ? err.userMessage : String(err);
       log.error(`TreeView 读取 ${path} 失败`, err);

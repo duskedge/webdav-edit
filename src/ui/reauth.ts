@@ -13,6 +13,67 @@ import { log } from '../log/channel.ts';
 const COOLDOWN_MS = 60_000;
 
 const declinedUntil = new Map<string, number>();
+const missingCredentialsInFlight = new Map<string, Promise<boolean>>();
+
+/**
+ * 凭据不存在时给出可操作的输入引导，并合并同一连接的并发提示。
+ * 常见于 Settings Sync、新设备，以及扩展标识发生变化后的首次启动。
+ */
+export async function promptMissingCredentials(
+  store: ConnectionStore,
+  connectionId: string
+): Promise<boolean> {
+  const existing = missingCredentialsInFlight.get(connectionId);
+  if (existing) return existing;
+
+  const task = askForMissingCredentials(store, connectionId);
+  missingCredentialsInFlight.set(connectionId, task);
+  try {
+    return await task;
+  } finally {
+    if (missingCredentialsInFlight.get(connectionId) === task) {
+      missingCredentialsInFlight.delete(connectionId);
+    }
+  }
+}
+
+async function askForMissingCredentials(
+  store: ConnectionStore,
+  connectionId: string
+): Promise<boolean> {
+  const until = declinedUntil.get(connectionId) ?? 0;
+  if (Date.now() < until) return false;
+
+  const conn = store.get(connectionId);
+  const name = conn?.alias ?? connectionId;
+  const choice = await vscode.window.showWarningMessage(
+    `WebDAV 连接「${name}」缺少密码或 Token。连接信息已保留，请在本设备重新输入凭据。`,
+    '输入凭据',
+    '暂不处理'
+  );
+
+  if (choice !== '输入凭据') {
+    declinedUntil.set(connectionId, Date.now() + COOLDOWN_MS);
+    return false;
+  }
+
+  const password = await vscode.window.showInputBox({
+    title: `「${name}」认证`,
+    prompt: conn?.authType === 'bearer' ? '请输入 Token' : '请输入密码或应用专用密码',
+    password: true,
+    ignoreFocusOut: true,
+  });
+
+  if (password === undefined) {
+    declinedUntil.set(connectionId, Date.now() + COOLDOWN_MS);
+    return false;
+  }
+
+  await store.setPassword(connectionId, password);
+  declinedUntil.delete(connectionId);
+  log.info(`连接 ${connectionId} 的缺失凭据已补充`);
+  return true;
+}
 
 /**
  * 提示用户重新输入凭据。
