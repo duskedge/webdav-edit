@@ -2,7 +2,7 @@
   "name": "webdav-edit",
   "displayName": "WebDAV Edit",
   "description": "将远程 WebDAV 目录作为原生工作区打开，直接浏览与编辑远程文件。仅支持桌面版 VSCode。",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "duskEdge",
   "license": "MIT",
   "engines": {

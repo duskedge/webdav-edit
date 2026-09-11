@@ -72,9 +72,23 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: CommandDeps
       tree.refresh(node);
       return;
     }
-    // 无节点：刷新当前工作区与整棵树
+    // 无节点：清空所有已配置连接的缓存并刷新整棵树。
+    // 不能只处理 workspaceFolders：用户可能只在 WebDAV 侧边栏浏览连接，
+    // 当前工作区仍是本地目录，此时也必须让刷新按钮真正拉取最新目录。
+    const refreshedConnections = new Set<string>();
+    for (const conn of store.list()) {
+      provider.refresh(buildUri(conn.id, '/'));
+      refreshedConnections.add(conn.id);
+    }
+
+    // 兼容配置已移除、但窗口中仍暂存着 webdav 工作区的情况。
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
-      if (folder.uri.scheme === 'webdav') provider.refresh(folder.uri);
+      if (
+        folder.uri.scheme === 'webdav' &&
+        !refreshedConnections.has(folder.uri.authority)
+      ) {
+        provider.refresh(folder.uri);
+      }
     }
     tree.refresh();
   });

@@ -109,6 +109,21 @@ test('invalidateSubtree 不误伤同前缀的兄弟路径', () => {
   assert.ok(c.getStat(CONN, '/dirextra'));
 });
 
+test('invalidateSubtree 刷新根目录时清空该连接的全部子目录缓存', () => {
+  const c = new MetadataCache(30);
+  c.setChildren(CONN, '/', [entry('docker', true)]);
+  c.setChildren(CONN, '/docker', [entry('existing', true)]);
+  c.setChildren(CONN, '/docker/existing', [entry('file.txt')]);
+  c.setChildren('conn-2', '/', [entry('keep', true)]);
+
+  c.invalidateSubtree(CONN, '/');
+
+  assert.equal(c.getChildren(CONN, '/'), undefined);
+  assert.equal(c.getChildren(CONN, '/docker'), undefined);
+  assert.equal(c.getChildren(CONN, '/docker/existing'), undefined);
+  assert.ok(c.getChildren('conn-2', '/'), '其他连接的缓存不应被清除');
+});
+
 test('clearConnection 只清目标连接 (5.4 配置变更)', () => {
   const c = new MetadataCache(30);
   c.setStat(CONN, '/a.txt', stat(false));
