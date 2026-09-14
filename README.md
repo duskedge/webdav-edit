@@ -14,6 +14,7 @@ It is designed for lightweight remote editing of configuration files, scripts, M
 - Open remote directories directly as `webdav://` virtual workspaces.
 - Manage multiple connections from a dedicated Activity Bar view.
 - Read, write, create, delete, rename, and copy files and directories.
+- Download individual remote files to a chosen local path from the tree context menu.
 - Detect conflicting saves with ETag and `If-Match` validation.
 - Authenticate with Basic, Digest, Bearer token, or no authentication.
 - Store passwords and tokens in VS Code `SecretStorage`, never in settings or workspace URIs.

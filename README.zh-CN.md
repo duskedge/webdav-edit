@@ -14,6 +14,7 @@
 - 通过 `webdav://` 虚拟工作区直接打开远程目录。
 - 在活动栏的独立视图中管理多个 WebDAV 连接。
 - 支持读取、写入、新建、删除、重命名和复制文件与目录。
+- 可从侧边栏右键菜单将单个远程文件下载到指定的本地位置。
 - 使用 ETag 和 `If-Match` 检测保存冲突，避免覆盖他人修改。
 - 支持 Basic、Digest、Bearer Token 和无认证模式。
 - 密码和 Token 存入 VS Code `SecretStorage`，不会写进设置或工作区 URI。

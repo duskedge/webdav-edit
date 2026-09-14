@@ -2,6 +2,7 @@
  * 命令与交互（PRD FR-1.1、FR-1.3、FR-1.4、FR-2.1、FR-4.5）。
  */
 import * as vscode from 'vscode';
+import { homedir } from 'node:os';
 import {
   describe,
   generateConnectionId,
@@ -13,6 +14,7 @@ import {
 import { ConnectionStore } from '../connection/store.ts';
 import { HttpClient } from '../webdav/request.ts';
 import { WebdavClient } from '../webdav/client.ts';
+import { basename } from '../webdav/path.ts';
 import { isWebdavError } from '../webdav/errors.ts';
 import { buildUri, type WebdavFileSystemProvider } from '../fs/provider.ts';
 import type { ConnectionResolver } from '../connection/resolver.ts';
@@ -99,6 +101,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: CommandDeps
   );
   reg('webdavEdit.openNodeInNewWindow', (node: TreeNode) => openNode(ctx, node, 'new'));
   reg('webdavEdit.addNodeToWorkspace', (node: TreeNode) => openNode(ctx, node, 'add'));
+  reg('webdavEdit.downloadFile', (node: TreeNode) => downloadFile(node, provider));
   reg('webdavEdit.copyRemotePath', async (node: TreeNode) => {
     const path = node.kind === 'entry' ? node.path : node.kind === 'connection' ? '/' : '';
     if (!path) return;
@@ -111,6 +114,40 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: CommandDeps
     if (path === undefined) return;
     await openTarget(ctx, node.conn.id, node.conn.alias, path, 'ask');
   });
+}
+
+async function downloadFile(
+  node: TreeNode,
+  provider: WebdavFileSystemProvider
+): Promise<void> {
+  if (node.kind !== 'entry' || node.isDirectory) return;
+
+  const fileName = basename(node.path);
+  const destination = await vscode.window.showSaveDialog({
+    title: `下载 ${fileName}`,
+    saveLabel: '下载',
+    defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), 'Downloads', fileName),
+  });
+  if (!destination) return;
+
+  try {
+    const data = await provider.readFile(buildUri(node.connectionId, node.path));
+    await vscode.workspace.fs.writeFile(destination, data);
+    const choice = await vscode.window.showInformationMessage(
+      `已下载 ${fileName}`,
+      '打开文件',
+      '在文件管理器中显示'
+    );
+    if (choice === '打开文件') {
+      await vscode.commands.executeCommand('vscode.open', destination);
+    } else if (choice === '在文件管理器中显示') {
+      await vscode.commands.executeCommand('revealFileInOS', destination);
+    }
+  } catch (err) {
+    log.error(`下载 ${node.path} 失败`, err);
+    const message = err instanceof Error ? err.message : String(err);
+    void vscode.window.showErrorMessage(`下载失败：${message}`);
+  }
 }
 
 type OpenMode = 'current' | 'new' | 'add' | 'ask';

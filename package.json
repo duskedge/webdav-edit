@@ -2,7 +2,7 @@
   "name": "webdav-edit",
   "displayName": "WebDAV Edit",
   "description": "将远程 WebDAV 目录作为原生工作区打开，直接浏览与编辑远程文件。仅支持桌面版 VSCode。",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "duskEdge",
   "license": "MIT",
   "engines": {
@@ -92,6 +92,12 @@
         "command": "webdavEdit.copyRemotePath",
         "title": "复制远程路径",
         "category": "WebDAV"
+      },
+      {
+        "command": "webdavEdit.downloadFile",
+        "title": "下载到本地…",
+        "category": "WebDAV",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "webdavEdit.findByName",
@@ -341,9 +347,14 @@
           "group": "1_open@3"
         },
         {
+          "command": "webdavEdit.downloadFile",
+          "when": "view == webdavEdit.connections && viewItem == webdavFile",
+          "group": "2_transfer@1"
+        },
+        {
           "command": "webdavEdit.copyRemotePath",
           "when": "view == webdavEdit.connections && viewItem =~ /webdavDirectory|webdavFile/",
-          "group": "2_copy"
+          "group": "2_transfer@2"
         },
         {
           "command": "webdavEdit.refresh",
@@ -372,6 +383,10 @@
         },
         {
           "command": "webdavEdit.addNodeToWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "webdavEdit.downloadFile",
           "when": "false"
         },
         {
