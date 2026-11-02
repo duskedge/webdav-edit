@@ -62,6 +62,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "webdavEdit.refreshAll",
+        "title": "刷新全部连接",
+        "category": "WebDAV",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "webdavEdit.showLog",
         "title": "显示诊断日志",
         "category": "WebDAV",
@@ -305,7 +311,7 @@
           "group": "navigation@1"
         },
         {
-          "command": "webdavEdit.refresh",
+          "command": "webdavEdit.refreshAll",
           "when": "view == webdavEdit.connections",
           "group": "navigation@2"
         },

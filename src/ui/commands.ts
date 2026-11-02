@@ -14,7 +14,7 @@ import {
 import { ConnectionStore } from '../connection/store.ts';
 import { HttpClient } from '../webdav/request.ts';
 import { WebdavClient } from '../webdav/client.ts';
-import { basename } from '../webdav/path.ts';
+import { basename, dirname } from '../webdav/path.ts';
 import { isWebdavError } from '../webdav/errors.ts';
 import { buildUri, type WebdavFileSystemProvider } from '../fs/provider.ts';
 import type { ConnectionResolver } from '../connection/resolver.ts';
@@ -63,18 +63,10 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: CommandDeps
   reg('webdavEdit.searchInFiles', () => explainFullTextSearch());
 
   // ---- FR-2.4 刷新（T-2.8）----
-  reg('webdavEdit.refresh', (node?: TreeNode) => {
-    if (node && node.kind === 'entry') {
-      provider.refresh(buildUri(node.connectionId, node.path));
-      tree.refresh(node);
-      return;
-    }
-    if (node && node.kind === 'connection') {
-      provider.refresh(buildUri(node.conn.id, '/'));
-      tree.refresh(node);
-      return;
-    }
-    // 无节点：清空所有已配置连接的缓存并刷新整棵树。
+  // 标题栏按钮单独用 refreshAll：VSCode 会把 TreeView 当前聚焦的节点作为参数
+  // 传给 view/title 命令，若共用 refresh，选中文件或子目录时就只刷新了该节点。
+  const refreshAll = (): void => {
+    // 清空所有已配置连接的缓存并刷新整棵树。
     // 不能只处理 workspaceFolders：用户可能只在 WebDAV 侧边栏浏览连接，
     // 当前工作区仍是本地目录，此时也必须让刷新按钮真正拉取最新目录。
     const refreshedConnections = new Set<string>();
@@ -93,6 +85,26 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: CommandDeps
       }
     }
     tree.refresh();
+  };
+  reg('webdavEdit.refreshAll', refreshAll);
+  reg('webdavEdit.refresh', (node?: TreeNode) => {
+    if (node && node.kind === 'entry' && node.isDirectory) {
+      provider.refresh(buildUri(node.connectionId, node.path));
+      tree.refresh(node);
+      return;
+    }
+    if (node && node.kind === 'entry') {
+      // 文件节点没有子项，刷新它自身看不到变化；改为清掉所在目录的缓存再刷新整棵树
+      provider.refresh(buildUri(node.connectionId, dirname(node.path)));
+      tree.refresh();
+      return;
+    }
+    if (node && node.kind === 'connection') {
+      provider.refresh(buildUri(node.conn.id, '/'));
+      tree.refresh(node);
+      return;
+    }
+    refreshAll();
   });
 
   // ---- FR-2.2 TreeView 上下文菜单（T-2.5）----
